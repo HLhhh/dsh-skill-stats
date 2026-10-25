@@ -10,6 +10,8 @@
 
 ![Skill stats panel, light theme](./docs/preview-light.jpg)
 
+*Screenshots use sample data; the panel itself reads your own local session logs.*
+
 ## Why
 
 Harness shows you *which skills exist*. It does not show you *which skills you use*. Two consequences:
