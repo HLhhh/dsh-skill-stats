@@ -133,7 +133,7 @@ cordis.patch.yml    一行 Loader 条目
 locale/             插件管理页标题/描述（en、zh）
 icon.svg            插件与侧栏图标
 docs/               截图
-test/smoke.mjs      零依赖冒烟测试（npm test）
+test/smoke.mjs      零依赖冒烟测试，CI 里同样运行
 ```
 
 ## 许可证

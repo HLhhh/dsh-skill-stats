@@ -26,4 +26,4 @@ All notable changes to this project are documented here. Format follows
   CRLF/BOM tolerant and respects `disable-model-invocation`.
 - Origin resolution by file location, so a plugin-provided skill is labelled
   with its package name instead of the service's generic `bundled` source.
-- Dependency-free smoke tests (`npm test`).
+- Dependency-free smoke tests (`npm test`) and a GitHub Actions workflow.

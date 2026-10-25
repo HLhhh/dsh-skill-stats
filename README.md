@@ -133,7 +133,7 @@ cordis.patch.yml    one Loader row
 locale/             plugin-manager title/description (en, zh)
 icon.svg            plugin and sidebar icon
 docs/               screenshots
-test/smoke.mjs      dependency-free smoke tests (npm test)
+test/smoke.mjs      dependency-free smoke tests, also run in CI
 ```
 
 ## License

@@ -1,9 +1,9 @@
 /**
  * Dependency-free smoke tests.
  *
- * They run locally with `npm test` and cover the two failures that packaging
- * usually hides: the host module no longer exports what the Loader expects, and
- * the browser bundle can no longer register its two slots.
+ * They run in CI and locally (`npm test`) and cover the two failures that
+ * packaging usually hides: the host module no longer exports what the Loader
+ * expects, and the browser bundle can no longer register its two slots.
  */
 
 import assert from 'node:assert/strict'
