@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Skill 使用统计",
+    "description": "列出每个已安装 skill 的使用次数、会话覆盖与占全部使用的比例。"
+  }
+}

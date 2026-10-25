@@ -1,0 +1,65 @@
+{
+  "name": "dsh-skill-stats",
+  "version": "0.1.0",
+  "description": "Skill usage statistics for DeepSeek Harness: every installed skill with its use count, session coverage, and share of all skill use.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon.svg": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README_zh.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "license": "MIT",
+  "author": "HLhhh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HLhhh/dsh-skill-stats.git"
+  },
+  "homepage": "https://github.com/HLhhh/dsh-skill-stats#readme",
+  "bugs": {
+    "url": "https://github.com/HLhhh/dsh-skill-stats/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "skills",
+    "usage",
+    "statistics",
+    "panel"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# dsh-skill-stats 的组合包补丁。
+#
+# 本包只有一个 Loader 行：host 半负责扫描会话日志并在 /dsh-skill-stats/api 上
+# 返回统计；浏览器半注册左栏图标与面板，不占用任何宿主服务。
+
+- insert:
+    - id: ui-skill-stats
+      name: dsh-skill-stats
