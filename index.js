@@ -61,7 +61,7 @@ export function apply(ctx) {
   const inventory = createInventory({
     skills: ctx.skills,
     presets: ctx.agentPresets,
-    home,
+    dshHome: home,
     profileDir: process.env.DSH_PROFILE_DIR || '',
     projectDir,
     diagnostics,

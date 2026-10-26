@@ -123,7 +123,7 @@ The result is cached for a minute and invalidated by `skills/change`.
 ## Development
 
 ```sh
-npm test          # node --test test/ — 23 tests, no dependencies
+npm test          # node --test test/ — 25 tests, no dependencies
 npm pack --dry-run
 ```
 
@@ -133,13 +133,19 @@ temporary directory and a fake clock; nothing touches your real `~/.dsh`.
 Repository layout:
 
 ```
-index.js            host half: session scan, aggregation, /dsh-skill-stats/api
+index.js            adapter: wires host events and /dsh-skill-stats/api
+lib/counter.js      counting: record / snapshot / daily / reset / flush
+lib/inventory.js    installed skills: list / invalidate
+lib/payload.js      pure row shaping for the API response
+lib/window.js       day and window maths
+lib/skills-md.js    frontmatter parsing + origin classification (pure)
+lib/diagnostics.js  bounded record of swallowed failures
 client.js           browser half: sidebar icon + panel (plain JS, no build)
 cordis.patch.yml    one Loader row
 locale/             plugin-manager title/description (en, zh)
 icon.svg            plugin and sidebar icon
 docs/               screenshots
-test/smoke.mjs      dependency-free smoke tests, also run in CI
+test/*.test.mjs     25 dependency-free tests (npm test)
 ```
 
 ## How changes land

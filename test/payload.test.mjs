@@ -48,11 +48,12 @@ test('empty counts keep the inventory and divide by zero safely', () => {
   const payload = buildPayload(
     { startedAt: 0, window: 'today', cutoff: 9, calls: 0, failed: 0, sessions: 0, perSkill: new Map() },
     [grilling],
-    {},
+    { generatedAt: 7 },
   )
   assert.equal(payload.totals.calls, 0)
   assert.equal(payload.skills[0].share, 0)
   assert.deepEqual(payload.uninstalled, [])
   assert.equal(payload.window, 'today')
   assert.equal(payload.cutoff, 9)
+  assert.equal(payload.generatedAt, 7)
 })

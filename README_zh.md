@@ -10,7 +10,7 @@
 
 ![Skill 使用统计面板，浅色主题](./docs/preview-light.jpg)
 
-*截图为示例数据；面板运行时会读取你自己的会话日志。*
+*截图为示例数据；面板运行时会读取你自己的计数文件（不读会话日志）。*
 
 ## 为什么需要它
 
@@ -123,7 +123,7 @@ dsh plugin --profile web remove dsh-skill-stats
 ## 开发
 
 ```sh
-npm test          # node --test test/ —— 23 个测试，无第三方依赖
+npm test          # node --test test/ —— 25 个测试，无第三方依赖
 npm pack --dry-run
 ```
 
@@ -132,13 +132,19 @@ npm pack --dry-run
 目录结构：
 
 ```
-index.js            宿主半边：会话扫描、聚合、/dsh-skill-stats/api
+index.js            适配器：把宿主事件与 /dsh-skill-stats/api 接到模块上
+lib/counter.js      计数：record / snapshot / daily / reset / flush
+lib/inventory.js    已装清单：list / invalidate
+lib/payload.js      纯函数：把聚合结果拼成接口返回
+lib/window.js       日期与时间窗计算
+lib/skills-md.js    frontmatter 解析 + 来源判定（纯函数）
+lib/diagnostics.js  被吞掉的失败的有界记录
 client.js           浏览器半边：左栏图标 + 面板（纯 JS，无构建）
 cordis.patch.yml    一行 Loader 条目
 locale/             插件管理页标题/描述（en、zh）
 icon.svg            插件与侧栏图标
 docs/               截图
-test/smoke.mjs      零依赖冒烟测试，CI 里同样运行
+test/*.test.mjs     25 个零依赖测试（npm test）
 ```
 
 ## 改动如何合入

@@ -42,7 +42,7 @@ test('merges service, disk, plugin-package and preset sources', async () => {
     profileWithPlugin(profile.dir)
 
     const { skills, presets } = services()
-    const inventory = createInventory({ skills, presets, home: home.dir, profileDir: profile.dir, clock: fakeClock() })
+    const inventory = createInventory({ skills, presets, dshHome: home.dir, profileDir: profile.dir, clock: fakeClock() })
     const rows = await inventory.list()
     const byName = new Map(rows.map((row) => [row.name, row]))
 
@@ -61,12 +61,34 @@ test('merges service, disk, plugin-package and preset sources', async () => {
   }
 })
 
+test('reads ~/.agents/skills from the real user home, not from DSH_HOME', async () => {
+  const dsh = tempDir()
+  const user = tempDir()
+  try {
+    writeSkill(join(user.dir, '.agents', 'skills'), 'agents-skill', '---\nname: agents-skill\n---\n')
+    const inventory = createInventory({
+      skills: { async list() { return [] } },
+      presets: null,
+      dshHome: dsh.dir,
+      userHome: user.dir,
+      clock: fakeClock(),
+    })
+    const rows = await inventory.list()
+    const row = rows.find((entry) => entry.name === 'agents-skill')
+    assert.ok(row, 'found under the injected user home')
+    assert.equal(row.origin.kind, 'self')
+  } finally {
+    dsh.cleanup()
+    user.cleanup()
+  }
+})
+
 test('caches the listing and invalidates on demand', async () => {
   const home = tempDir()
   try {
     const clock = fakeClock()
     const { skills, presets } = services()
-    const inventory = createInventory({ skills, presets, home: home.dir, clock })
+    const inventory = createInventory({ skills, presets, dshHome: home.dir, clock })
     const first = await inventory.list()
     assert.equal(await inventory.list(), first, 'cached call returns the same rows')
 

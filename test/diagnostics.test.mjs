@@ -21,8 +21,15 @@ test('aggregates swallowed failures by site', () => {
   assert.ok(flush.lastAt > 0)
 })
 
+test('uses the injected clock for lastAt', () => {
+  const clock = fakeClock(1234)
+  const diagnostics = createDiagnostics({ clock })
+  diagnostics.note('a', new Error('x'))
+  assert.equal(diagnostics.list()[0].lastAt, 1234)
+})
+
 test('stays bounded and never throws', () => {
-  const diagnostics = createDiagnostics(2)
+  const diagnostics = createDiagnostics({ limit: 2 })
   diagnostics.note('a', new Error('1'))
   diagnostics.note('b', new Error('2'))
   diagnostics.note('c', new Error('3'))
@@ -51,7 +58,7 @@ test('an unreadable profile manifest is reported', async () => {
     const inventory = createInventory({
       skills: { async list() { return [] } },
       presets: null,
-      home: home.dir,
+      dshHome: home.dir,
       profileDir: profile.dir,
       clock: fakeClock(),
       diagnostics,

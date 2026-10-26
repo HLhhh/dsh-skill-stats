@@ -6,7 +6,7 @@ All notable changes to this project are documented here. Format follows
 
 ## [0.2.1] - 2026-10-26
 
-Internal restructuring; no behaviour change.
+Internal restructuring plus two small API tidy-ups; counting semantics are unchanged.
 
 ### Changed
 
@@ -26,6 +26,10 @@ Internal restructuring; no behaviour change.
 - Swallowed failures now report to a bounded diagnostics sink
   (`lib/diagnostics.js`) instead of disappearing; the API payload carries them as
   a `diagnostics` array. Missing files on first run are not treated as failures.
+- API tidy-up: the payload no longer carries the scanner-era zero fields
+  (`scannedSessions`, `liveSessions`, `fileSessions`, `skippedSessions`), which
+  the panel never read after 0.2.0. Malformed stored day keys are now ignored
+  instead of being counted.
 
 ### Added
 
