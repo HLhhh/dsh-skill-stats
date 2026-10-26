@@ -4,6 +4,42 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-26
+
+Internal restructuring; no behaviour change.
+
+### Changed
+
+- The host half is split into modules behind small interfaces:
+  `lib/counter.js` (record / snapshot / daily / reset / flush),
+  `lib/inventory.js` (list / invalidate), `lib/payload.js` (pure),
+  `lib/window.js` (day and window math), `lib/skills-md.js` (frontmatter and
+  origin classification). `index.js` is now a ~150-line adapter that only wires
+  host events and the route.
+- Dependencies are accepted instead of created: the counter receives its
+  directory and clock, the inventory receives its services, directories and
+  clock. Tests run against temporary directories with a fake clock.
+- Day maths has one owner; the payload layer no longer re-parses day keys that
+  the counter wrote.
+- The two inventory caches (service listing and plugin-package index) are now
+  owned by one module and invalidated together on `skills/change`.
+- Swallowed failures now report to a bounded diagnostics sink
+  (`lib/diagnostics.js`) instead of disappearing; the API payload carries them as
+  a `diagnostics` array. Missing files on first run are not treated as failures.
+
+### Added
+
+- 23 dependency-free tests run by `node --test test/`: counter (windows,
+  persistence, reset, sessions, failures), inventory (four sources,
+  cache/invalidate), payload (shares, uninstalled bucket), frontmatter and origin
+  classification (CRLF/BOM, plugin labels), diagnostics (aggregation, bounds,
+  real failures reported, benign absences ignored), route wiring (event → count →
+  payload → flush), and the client bundle contract.
+
+### Removed
+
+- `test/smoke.mjs`, replaced by the `node:test` suite.
+
 ## [0.2.0] - 2026-10-26
 
 ### Changed

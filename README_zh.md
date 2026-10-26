@@ -123,9 +123,11 @@ dsh plugin --profile web remove dsh-skill-stats
 ## 开发
 
 ```sh
-npm test          # 语法 + 行为冒烟测试，无第三方依赖
+npm test          # node --test test/ —— 23 个测试，无第三方依赖
 npm pack --dry-run
 ```
+
+宿主半边都是带注入依赖的模块，所以测试跑在临时目录 + 假时钟上，不碰你真实的 `~/.dsh`。
 
 目录结构：
 

@@ -123,9 +123,12 @@ The result is cached for a minute and invalidated by `skills/change`.
 ## Development
 
 ```sh
-npm test          # syntax + behavior smoke tests, no dependencies
+npm test          # node --test test/ — 23 tests, no dependencies
 npm pack --dry-run
 ```
+
+The host half is modules with injected dependencies, so tests run against a
+temporary directory and a fake clock; nothing touches your real `~/.dsh`.
 
 Repository layout:
 
