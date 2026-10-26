@@ -139,6 +139,17 @@ docs/               screenshots
 test/smoke.mjs      dependency-free smoke tests, also run in CI
 ```
 
+## How changes land
+
+This repository has one maintainer and an AI agent working on it. **Before changing code, the agent asks which path to take** — it never decides alone:
+
+| Path | When |
+| --- | --- |
+| **Pull request** | Behaviour changes, version bumps, UI changes, anything that touches counting — and whenever review is wanted |
+| **Direct push to `main`** | Only when the maintainer explicitly asks for it |
+
+`main` has no branch protection, on purpose: the choice is made per change by the maintainer, not enforced by the platform. Pull requests use [`./.github/pull_request_template.md`](./.github/pull_request_template.md).
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
