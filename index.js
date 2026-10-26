@@ -2,7 +2,7 @@
  * Host half of `dsh-skill-stats` — an adapter only.
  *
  * Everything with behaviour lives behind a module interface:
- *   lib/counter.js    record / snapshot / daily / reset / flush
+ *   lib/counter.js    record / snapshot / flush
  *   lib/inventory.js  list / invalidate
  *   lib/payload.js    buildPayload (pure)
  *   lib/window.js     day math and window filtering

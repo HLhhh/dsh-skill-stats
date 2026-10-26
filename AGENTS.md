@@ -15,6 +15,10 @@ Never infer the path from the size of the change, and never switch paths mid-tas
 without asking. `main` has no branch protection by the maintainer's decision;
 this rule is what replaces it.
 
+A **direct push to `main`** must record the maintainer's authorization in the
+commit message as a `Maintainer-authorized:` trailer naming what was authorized
+and when — git history is the only audit trail while protection is off.
+
 ## Conventions
 
 - `npm test` must pass before a change lands. It is dependency-free.

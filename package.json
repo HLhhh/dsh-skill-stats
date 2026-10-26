@@ -14,7 +14,8 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
-    "./icon.svg": "./icon.svg"
+    "./icon.svg": "./icon.svg",
+    "./lib/*.js": "./lib/*.js"
   },
   "files": [
     "index.js",

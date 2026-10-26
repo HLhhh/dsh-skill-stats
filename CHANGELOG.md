@@ -6,8 +6,9 @@ All notable changes to this project are documented here. Format follows
 
 ## [0.3.0] - 2026-10-26
 
-Internal restructuring. Counting behaviour is the same, but the package's
-exported API changed, so this is a minor release rather than a patch.
+Internal restructuring. Counting inputs are unchanged (live host events only),
+but the package's exported API changed and two semantics moved, so this is a
+minor release rather than a patch. Every difference is listed below.
 
 ### Changed
 
@@ -30,11 +31,18 @@ exported API changed, so this is a minor release rather than a patch.
   (`scannedSessions`, `liveSessions`, `fileSessions`, `skippedSessions`) that the
   panel never read after 0.2.0. Malformed stored day keys are ignored instead of
   being counted.
+- The inventory reads `~/.agents/skills` from the real user home (new injected
+  `userHome`, defaulting to `homedir()`), as 0.2.0 did. The modular extraction had
+  briefly derived that path from `$DSH_HOME/..`, which pointed at a different
+  directory whenever `DSH_HOME` was overridden; that regression never shipped.
+- The panel's loading text says it is reading the counter file, not scanning
+  session logs.
 
 ### Removed
 
 - The package entry no longer re-exports `buildPayload`, `normalizeWindow` and
-  `cutoffFor`; those were test conveniences. Import `lib/*.js` directly.
+  `cutoffFor`; those were test conveniences. Import the module directly through
+  the new subpath exports, e.g. `import { buildPayload } from 'dsh-skill-stats/lib/payload.js'`.
 - `createCounter` exposes `record`, `snapshot` and `flush` only; `daily()` and
   `reset()` were removed until a feature consumes them.
 - `test/smoke.mjs`, replaced by the `node:test` suite.
@@ -105,4 +113,4 @@ exported API changed, so this is a minor release rather than a patch.
   CRLF/BOM tolerant and respects `disable-model-invocation`.
 - Origin resolution by file location, so a plugin-provided skill is labelled
   with its package name instead of the service's generic `bundled` source.
-- Dependency-free smoke tests (`npm test`) and a GitHub Actions workflow.
+- Dependency-free smoke tests (`npm test`).
