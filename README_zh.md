@@ -23,16 +23,16 @@ Harness 能告诉你**有哪些 skill**，但不会告诉你**你在用哪些**�
 
 ## 什么算「一次使用」
 
-只认会话日志里的两种信号：
+从插件**启用那一刻**开始计数。只认宿主实时送来的两种事件：
 
-1. agent 调用了 `skill` 工具（`tool/call` 且 `name: "skill"`，请求的技能名在 `arguments.name`）；
-2. 你用 `/name` 直接调用（`user/message` 的 `source.kind` 为 `skill-invocation`）。
+1. agent 调用了 `skill` 工具；
+2. 你用 `/name` 调用某个 skill。
 
-其它都不算：skill 只是出现在提示词列表里、agent 自己 `read` 了某个 `SKILL.md`、面板被打开过，都不计。
+其它一律不计，而且**完全不读会话日志** —— 打开页面不读、后台也不读。装插件之前的历史使用看不到，这是刻意的设计。
 
 | 列 | 含义 |
 | --- | --- |
-| 调用 | 当前时间窗内上述两种信号的次数 |
+| 调用 | 当前时间窗内上述两种事件的次数 |
 | 会话 | 用过该 skill 的不同会话数 |
 | 占比 | 该 skill 次数 ÷ 当前筛选下的总调用次数 |
 | 最后使用 | 最近一次使用的时间 |
@@ -40,15 +40,11 @@ Harness 能告诉你**有哪些 skill**，但不会告诉你**你在用哪些**�
 
 ## 功能
 
+- **实时计数，不解析日志。** 计数来自宿主事件（`tools/result` 与 `session/event`），防抖写入一个小 JSON 文件，重启后仍在；打开面板只读一个文件。
 - **每个已安装 skill 都在表里**，包括只能 `/name` 调用的（带「手动」标签）和插件提供的。
-- **来源不糊弄。** 技能服务里的 `bundled` 只表示「来自某个 bundle 技能根」，不等于 Harness 自带；面板按 `SKILL.md` 的真实位置判定：插件包内 `skill/`、`skills/` 下的就标成 `插件:<包名>`。
-- **不留陈旧快照。** 每次打开页面重新扫描，打开期间每 5 秒自动刷新；会话按持久化 revision 缓存，只有变化的才重读（热扫描约 166ms）。
-- **日志读得对。** 已结束会话走宿主 `sessionPersistence` 服务读取，而不是自己做一次 zstd 解压 —— 会话日志是多帧追加写的，一次性 `zstdDecompressSync` 只会解出第一帧。
+- **来源不糊弄。** 技能服务里的 `bundled` 只表示「来自某个 bundle 技能根」；面板按 `SKILL.md` 的真实位置判定：插件包内 `skill/`、`skills/` 下的就标成 `插件:<包名>`。
 - **时间窗与筛选**：全部 / 今日 / 近 7 天 / 近 30 天，按来源筛，搜索，「只看从未使用」，可选「含已卸载」。
-- **fork 友好。** 延续会话会重放父会话事件；继承事件与重复 callId 会被丢弃，同一次调用不会重复计数。
-- **只在本机。** 读你自己的会话日志，不发网络请求、没有遥测。
-
-![Skill 使用统计面板，深色主题](./docs/preview-dark.jpg)
+- **只在本机。** 计数文件存在你自己的 DSH home 里，不发网络请求、没有遥测。
 
 ## 安装
 
@@ -107,18 +103,22 @@ dsh plugin --profile web remove dsh-skill-stats
 
 ## 已装清单是怎么拼出来的
 
-`ctx.skills.list()` 只返回宿主插件自身作用域能看到的层，而桌面 profile 把 `~/.dsh/skills` 挂在 agent preset 的常驻组合里。只问它会把你自己装的 skill 全判成「已卸载」。所以面板合并三个来源、按名字去重：
+`ctx.skills.list()` 只返回宿主插件自身作用域能看到的层，而桌面 profile 把 `~/.dsh/skills` 挂在 agent preset 的常驻组合里。所以面板合并四个来源、按名字去重：
 
 1. `ctx.skills.list()` —— 全局作用域能看到的；
-2. 磁盘技能目录 —— `$DSH_HOME/skills`、`~/.agents/skills`、`$DSH_BUNDLED_SKILL_DIR`，以及会话语料里出现过的各工作区的 `.dsh/skills`、`.agents/skills`；解析 `SKILL.md` frontmatter（兼容 CRLF / BOM，尊重 `disable-model-invocation`）；
-3. 会话里的 skill 目录快照（`source.kind === "skill-catalog"`），用来补齐服务没有暴露的插件 / preset 技能。
+2. 磁盘技能目录 —— `$DSH_HOME/skills`、`~/.agents/skills`、`$DSH_BUNDLED_SKILL_DIR`，以及默认工作目录下的 `.dsh/skills`、`.agents/skills`；解析 `SKILL.md` frontmatter（兼容 CRLF / BOM，尊重 `disable-model-invocation`）；
+3. 已安装插件包内自带的技能（`skill/`、`skills/`、`assets/`）—— 这决定了插件的技能显示为 `插件:<包名>` 而不是笼统的「内置」；
+4. 每个 agent preset 的作用域，补齐 preset 挂载的技能。
+
+结果缓存一分钟，并在 `skills/change` 时失效。
 
 ## 已知限制
 
-- 一个 skill 如果既不在磁盘、也从未出现在任何会话的目录快照里，就无法被发现 —— Harness 没有跨作用域的「列出全部已装 skill」API。
-- 目录快照是历史累积：提供该技能的插件被卸载后，名字可能残留在清单里。
+- **没有历史。** 从插件第一次启用开始计数；之前的不算 —— 要算就必须读旧会话日志，这正是这一版刻意去掉的。
+- 删除 `$DSH_HOME/storages/dsh-skill-stats/usage.json` 即可清零重新起算；删除后重载插件，新的起算时间就是那一刻。
+- 用过、但任何来源都没能发现它的 skill，会落在「已卸载」分组（在筛选栏里打开开关即可看到）。
 - 同名 skill 按生效的那一份去重，被覆盖的不单独展示。
-- 失败标记只认 `tool/result` 带 `isError` 的形态，其它失败形态不归因。
+- 失败标记只认宿主对 skill 工具报的 `isError`。
 
 ## 开发
 

@@ -22,31 +22,54 @@ assert.equal(host.normalizeWindow('today'), 'today')
 assert.equal(host.normalizeWindow('nonsense'), 'all', 'unknown windows fall back to all')
 
 const now = Date.now()
-const scan = {
-  startedAt: now,
-  scanMs: 1,
-  sessions: 1,
-  liveSessions: 0,
-  fileSessions: 1,
-  skipped: 0,
-  inventory: [
-    { name: 'grilling', description: '', source: 'user-dsh', provider: 'filesystem', path: '', modelInvocable: true, userInvocable: true, origin: { kind: 'self', label: '' } },
-  ],
-  usages: [
-    { skill: 'grilling', time: now, sessionId: 's1', kind: 'agent', callId: 'c1', subagent: false },
-    { skill: 'grilling', time: now, sessionId: 's2', kind: 'user', callId: '', subagent: false },
-  ],
+const day = (() => {
+  const date = new Date(now)
+  const pad = (value) => (value < 10 ? '0' + value : String(value))
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+})()
+
+const state = {
+  version: 1,
+  startedAt: now - 1000,
+  skills: {
+    grilling: {
+      last: now,
+      days: { [day]: { total: 2, agent: 1, user: 1, failed: 0, last: now, sessions: ['s1', 's2'] } },
+    },
+    ghost: {
+      last: now,
+      days: { [day]: { total: 1, agent: 1, user: 0, failed: 1, last: now, sessions: ['s1'] } },
+    },
+  },
 }
 
-const payload = host.buildPayload(scan, 'all')
+const inventory = [
+  { name: 'grilling', description: '', source: 'user-dsh', provider: 'filesystem', path: '', modelInvocable: true, userInvocable: true, origin: { kind: 'self', label: '' } },
+]
+
+const payload = host.buildPayload(state, inventory, 'all')
+assert.equal(payload.startedAt, state.startedAt)
 assert.equal(payload.totals.installed, 1)
 assert.equal(payload.totals.used, 1)
-assert.equal(payload.totals.calls, 2)
+assert.equal(payload.totals.unused, 0)
+assert.equal(payload.totals.calls, 3)
 assert.equal(payload.totals.sessions, 2)
+assert.equal(payload.totals.failed, 1)
+assert.equal(payload.skills[0].total, 2)
 assert.equal(payload.skills[0].agent, 1)
 assert.equal(payload.skills[0].user, 1)
-assert.equal(payload.skills[0].share, 1)
-assert.deepEqual(payload.uninstalled, [])
+assert.ok(payload.skills[0].share > 0.66 && payload.skills[0].share < 0.67)
+assert.equal(payload.uninstalled.length, 1)
+assert.equal(payload.uninstalled[0].name, 'ghost')
+
+// The window filter drops days older than the cutoff.
+const oldDay = '2001-01-01'
+const oldState = {
+  startedAt: 0,
+  skills: { grilling: { last: 0, days: { [oldDay]: { total: 5, agent: 5, user: 0, failed: 0, last: 0, sessions: ['s1'] } } } },
+}
+assert.equal(host.buildPayload(oldState, inventory, 'today').totals.calls, 0)
+assert.equal(host.buildPayload(oldState, inventory, 'all').totals.calls, 5)
 
 /* ── browser half ───────────────────────────────────────────────────────── */
 

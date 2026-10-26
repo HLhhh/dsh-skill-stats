@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-26
+
+### Changed
+
+- **Counting is live-only.** The panel no longer reads session logs at all: it
+  subscribes to the host's `tools/result` (an agent calling the `skill` tool) and
+  `session/event` (a user invoking `/name`), and counts from the moment the
+  plugin is first enabled. This removes the whole log-parsing path — and with it
+  the multi-frame zstd class of bugs.
+- Counters are debounced into `$DSH_HOME/storages/dsh-skill-stats/usage.json`, so
+  they survive restarts; the panel route is a single small file read.
+- The inventory is cached for a minute and invalidated by `skills/change`; it now
+  also lists skills mounted inside each agent preset's scope.
+
+### Removed
+
+- Historical backfill from finished sessions (it required reading logs, which this
+  release deliberately stops doing).
+- The scanner-era fields `scanMs` and scanned-session counters.
+
 ## [0.1.1] - 2026-10-26
 
 ### Fixed

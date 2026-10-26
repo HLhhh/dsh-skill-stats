@@ -483,7 +483,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       title: 'Skill 使用统计',
-      lede: '一次使用 = agent 调用了 skill 工具，或你用 /name 直接调用。其它情况不计。',
+      lede: '从插件启用那一刻开始计数：只认 agent 调 skill 工具，或你用 /name 直呼。启用前的历史不计，也不读会话日志。',
       installed: '已装',
       used: '用过',
       unused: '从未使用',
@@ -523,9 +523,9 @@ window.__ModuleLoader__.load({
       noMatchHint: '换个时间窗或来源试试，也可以清空搜索词。',
       updated: '更新于 {time}',
       busy: '更新中',
-      scanned: '{sessions} 个会话 · 扫描 {ms} ms',
+      started: '统计自 {time}',
       footerRule: '占比 = 该 skill 调用次数 ÷ 当前筛选下的总调用次数',
-      footerAuto: '打开期间每 5 秒自动刷新',
+      footerHint2: '仅统计启用后的使用 · 打开期间每 5 秒刷新',
       failedTitle: '{n} 次调用出错',
       shareNever: '—',
       originTitle: '来源',
@@ -533,7 +533,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'Skill usage',
-      lede: 'One use = an agent calling the skill tool, or you invoking /name. Nothing else counts.',
+      lede: 'Counting starts when the plugin is first enabled: an agent calling the skill tool, or you invoking /name. Nothing before that counts, and no session log is read.',
       installed: 'Installed',
       used: 'Used',
       unused: 'Never used',
@@ -573,9 +573,9 @@ window.__ModuleLoader__.load({
       noMatchHint: 'Try another time window or source, or clear the search box.',
       updated: 'Updated {time}',
       busy: 'Updating',
-      scanned: '{sessions} sessions · scanned in {ms} ms',
+      started: 'Counting since {time}',
       footerRule: 'Share = this skill’s calls ÷ total calls in the current filter',
-      footerAuto: 'Refreshes every 5 s while open',
+      footerHint2: 'Only uses after enablement · refreshes every 5 s while open',
       failedTitle: '{n} failed calls',
       shareNever: '—',
       originTitle: 'Source',
@@ -592,6 +592,15 @@ window.__ModuleLoader__.load({
     /** Two-digit pad. */
     function pad2(value) {
       return value < 10 ? '0' + value : String(value)
+    }
+
+    /** `YYYY-MM-DD HH:MM` for the counting-start line. */
+    function formatStamp(time) {
+      if (!time) return '—'
+      const date = new Date(time)
+      return (
+        date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate()) + ' ' + pad2(date.getHours()) + ':' + pad2(date.getMinutes())
+      )
     }
 
     /** `HH:MM:SS` for the refresh stamp. */
@@ -1023,10 +1032,10 @@ window.__ModuleLoader__.load({
         h(
           'footer',
           { className: 'su-foot' },
-          data ? h('span', { key: 's' }, tr(t, 'scanned', { sessions: fmt(data.totals.scannedSessions), ms: fmt(data.scanMs) })) : h('span', { key: 's' }, ''),
+          data ? h('span', { key: 's' }, tr(t, 'started', { time: formatStamp(data.startedAt) })) : h('span', { key: 's' }, ''),
           h('span', { key: 'r' }, tr(t, 'footerRule')),
           h('span', { key: 'g', className: 'su-spacer' }),
-          h('span', { key: 'a' }, tr(t, 'footerAuto')),
+          h('span', { key: 'a' }, tr(t, 'footerHint2')),
         ),
       )
     }

@@ -23,32 +23,28 @@ This panel answers both with the smallest honest dataset: the two moments where 
 
 ## What counts as one use
 
-Exactly two signals, both taken from the session log:
+Counting starts the first moment the plugin is enabled. Two live host events are the only inputs:
 
-1. an agent calls the `skill` tool (`tool/call` with `name: "skill"`, the requested skill in `arguments.name`);
-2. you invoke a skill directly with `/name` (`user/message` whose `source.kind` is `skill-invocation`).
+1. an agent calls the `skill` tool;
+2. you invoke a skill with `/name`.
 
-Nothing else counts. A skill merely being listed in the prompt, an agent `read`-ing a `SKILL.md` file, or a panel being opened is not a use.
+Nothing else counts, and **no session log is ever read** — not on open, not in the background. Sessions that happened before you installed the plugin are invisible by design.
 
 | Column | Meaning |
 | --- | --- |
-| Calls | Number of the two signals above, in the selected time window |
+| Calls | Number of the two events since enablement, inside the selected window |
 | Sessions | Distinct conversations that used the skill |
 | Share | This skill's calls ÷ every counted call in the current filter |
-| Last used | Timestamp of the most recent use |
+| Last used | When the most recent use happened |
 | Source dot | Where the skill comes from: you, a plugin, bundled with Harness, a project, or uninstalled |
 
 ## Features
 
+- **Live counting, no log parsing.** Counts come from the host's own events (`tools/result` and `session/event`), are debounced into a small JSON file, and survive restarts. Opening the panel costs one file read.
 - **Every installed skill is listed**, including skills that are only callable as `/name` (they carry a small `manual` tag) and plugin-provided skills.
 - **Honest source labels.** `bundled` in the skills service only means "from a bundled skill root", so origin is resolved from the file's real location: a plugin's own `skill/`/`skills/` directory is labelled with that plugin's package name.
-- **Never a stale snapshot.** The panel rescans on every open and every five seconds while open; sessions are cached per persistence revision, so only the ones that changed are re-read (a warm scan is ~166 ms).
-- **Reads logs correctly.** Finished sessions go through the host's `sessionPersistence` service rather than a single zstd decode — a session log is a sequence of appended frames, and a one-shot `zstdDecompressSync` only returns the first one.
 - **Time windows and filters**: all time, today, 7 days, 30 days; filter by origin; search; "never used only"; optionally include skills that are no longer installed.
-- **Fork-aware.** Continued/forked sessions replay the parent's events; inherited events and duplicate call ids are dropped so one call is never counted twice.
-- **Local only.** It reads your own session logs. No network requests, no telemetry.
-
-![Skill stats panel, dark theme](./docs/preview-dark.jpg)
+- **Local only.** The counter file lives in your own DSH home. No network requests, no telemetry.
 
 ## Install
 
@@ -107,18 +103,22 @@ Nothing else registers: no tools, no slash commands, no changes to other panels.
 
 ## How the inventory is built
 
-`ctx.skills.list()` only reports the layer visible to a host plugin's own scope, and a desktop profile mounts `~/.dsh/skills` inside the agent preset's standing composition. Listing that alone would mislabel every user-installed skill as "uninstalled". The panel therefore merges three sources and de-duplicates by name:
+`ctx.skills.list()` only reports the layer visible to a host plugin's own scope, and a desktop profile mounts `~/.dsh/skills` inside the agent preset's standing composition. The panel therefore merges four sources and de-duplicates by name:
 
 1. `ctx.skills.list()` — everything the global scope can see;
-2. the disk skill roots — `$DSH_HOME/skills`, `~/.agents/skills`, `$DSH_BUNDLED_SKILL_DIR`, and the `.dsh/skills` / `.agents/skills` of working directories seen in the session corpus, parsing `SKILL.md` frontmatter (CRLF and BOM tolerant, `disable-model-invocation` respected);
-3. the per-session skill-catalog snapshot (`source.kind === "skill-catalog"`), which names plugin/preset skills the service did not expose.
+2. the disk skill roots — `$DSH_HOME/skills`, `~/.agents/skills`, `$DSH_BUNDLED_SKILL_DIR`, and the default working directory's `.dsh/skills` / `.agents/skills`, parsing `SKILL.md` frontmatter (CRLF and BOM tolerant, `disable-model-invocation` respected);
+3. skills shipped inside installed plugin packages (`skill/`, `skills/`, `assets/`), which is what turns a plugin's skill into `plugin:<package>` instead of the generic `bundled`;
+4. each agent preset's scope, so preset-mounted skills appear too.
+
+The result is cached for a minute and invalidated by `skills/change`.
 
 ## Known limitations
 
-- A skill that is neither on disk nor present in any session's catalog snapshot cannot be discovered, because Harness has no cross-scope "list every installed skill" API.
-- The catalog snapshot is historical: if a plugin that provided a skill is uninstalled, the name can linger in the list.
+- **No history.** Counting begins when the plugin is first enabled; anything before that is not counted — by design, because it would require reading old session logs.
+- Deleting `$DSH_HOME/storages/dsh-skill-stats/usage.json` resets the baseline; reload the plugin afterwards so the new file is created at that moment.
+- A skill that is used but cannot be discovered by any inventory source appears under "uninstalled" (toggle it in the filter bar).
 - Duplicate skill names are resolved to the effective one; the shadowed copy is not shown.
-- Failure marking relies on `tool/result` carrying `isError`; other failure shapes are not attributed.
+- Failure marking knows only the `isError` result the host reports for the skill tool.
 
 ## Development
 

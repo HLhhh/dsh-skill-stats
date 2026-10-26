@@ -1,325 +1,36 @@
 /**
  * Host half of `dsh-skill-stats`.
  *
- * One job: answer `GET /dsh-skill-stats/api` with the current skill usage
- * statistics. Every request recomputes from the session logs (a stale answer is
- * the one failure mode this panel must not have), while an mtime/size keyed
- * per-session cache keeps the steady-state cost near zero:
+ * Counting starts when the plugin is first enabled and lives in a small local
+ * file; **no session log is ever read**. Two host events are the only inputs:
  *
- *  - Sessions that are live are read through `ctx.sessionQuery.readSession`,
- *    which is authoritative including the events not yet flushed to disk.
- *  - Finished sessions are read from their `session.v4.jsonl.zstd` file, and
- *    only lines that can possibly carry usage are JSON-parsed.
- *  - The installed-skill inventory comes from `ctx.skills.list()`, which is
- *    invocation-neutral: it includes `/name`-only skills too.
+ *  - `tools/result` for an agent calling the `skill` tool;
+ *  - `session/event` for a user invoking a skill as `/name`.
  *
- * "Usage" is exactly the two signals the user asked for: an Agent calling the
- * `skill` tool (arguments.name), and a user message whose `source.kind` is
- * `skill-invocation` (a `/name` invocation). Nothing else counts.
+ * The panel route is therefore a cheap read of the counter file plus the skill
+ * inventory.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { zstdDecompressSync } from 'node:zlib'
 
 /** Stable Loader identity, following the shipped tool plugins. */
 export const name = 'dsh-skill-stats'
 
 /** Services the host half needs; a composition without them leaves the row inactive. */
-export const inject = ['webServer', 'skills', 'sessionQuery', 'sessionPersistence']
+export const inject = ['webServer', 'skills', 'agentPresets']
 
 /** Route the browser half reads. Same-origin, so the GUI's own auth applies. */
 export const ROUTE = '/dsh-skill-stats/api'
 
-/** How long one scan is reused: long enough to absorb a page's parallel requests. */
-const SCAN_TTL_MS = 400
-
 /** One day in milliseconds. */
 const DAY_MS = 86_400_000
 
-/** The DSH home this process runs against. */
 function dshHome() {
   return process.env.DSH_HOME || join(homedir(), '.dsh')
 }
 
-/**
- * Index every persisted session file by session id.
- *
- * The layout is `<DSH_HOME>/sessions/<workspace>/<sessionId>/session.v4.jsonl.zstd`.
- * A missing or unreadable tree yields an empty index; the live path still works.
- * @returns {Map<string, string>} session id → absolute file path.
- */
-function indexSessionFiles() {
-  const files = new Map()
-  const root = join(dshHome(), 'sessions')
-  let buckets = []
-  try {
-    buckets = readdirSync(root)
-  } catch {
-    return files
-  }
-  for (const bucket of buckets) {
-    const bucketPath = join(root, bucket)
-    try {
-      if (!statSync(bucketPath).isDirectory()) continue
-    } catch {
-      continue
-    }
-    let ids = []
-    try {
-      ids = readdirSync(bucketPath)
-    } catch {
-      continue
-    }
-    for (const id of ids) {
-      const file = join(bucketPath, id, 'session.v4.jsonl.zstd')
-      try {
-        if (!statSync(file).isFile()) continue
-      } catch {
-        continue
-      }
-      files.set(id, file)
-    }
-  }
-  return files
-}
-
-/**
- * Parse the skill names out of one `tool/call` line's arguments.
- * @param raw - the JSON string the event carries.
- * @returns the requested skill name, or '' when it cannot be read.
- */
-function skillNameFromArguments(raw) {
-  if (typeof raw !== 'string' || raw === '') return ''
-  try {
-    const parsed = JSON.parse(raw)
-    const value = parsed && typeof parsed.name === 'string' ? parsed.name.trim() : ''
-    return value
-  } catch {
-    return ''
-  }
-}
-
-/**
- * Fold one session's events into usage records.
- *
- * Accepts both real event objects (live sessions) and raw JSONL text (persisted
- * sessions) so the two paths cannot drift apart.
- * @param events - live event array, or null when reading text.
- * @param text - decompressed JSONL, or null when reading events.
- * @param sessionId - owning session.
- * @param header - session header (sub-agent detection).
- * @returns {{ usages: object[], failed: Set<string> }}
- */
-function foldSession(events, text, sessionId, header) {
-  const usages = []
-  const failed = new Set()
-  const catalog = []
-  const createdAt = header && typeof header.createdAt === 'number' ? header.createdAt : 0
-  const subagent = Boolean(header && (header.parentSession || header.origin === 'subagent' || (header.delegationDepth || 0) > 0))
-
-  /** Handle one decoded event. */
-  const handle = (event) => {
-    if (!event || typeof event.type !== 'string') return
-    // A forked/continued session log replays the parent's events ahead of its
-    // own. Those copies happened before this session existed, so they belong to
-    // the parent's count and must not be added again here.
-    if (createdAt > 0 && typeof event.time === 'number' && event.time < createdAt) return
-    const data = event.data
-    if (!data || typeof data !== 'object') return
-    if (event.type === 'tool/call') {
-      if (data.name !== 'skill') return
-      const skill = skillNameFromArguments(data.arguments)
-      if (skill === '') return
-      usages.push({
-        skill,
-        time: typeof event.time === 'number' ? event.time : 0,
-        sessionId,
-        kind: 'agent',
-        callId: typeof data.callId === 'string' ? data.callId : '',
-        subagent,
-      })
-      return
-    }
-    if (event.type === 'tool/result') {
-      const message = data.message
-      const isError = Boolean((message && message.isError === true) || data.error)
-      if (!isError) return
-      const callId = (message && (message.toolCallId || (message.source && message.source.callId))) || ''
-      if (typeof callId === 'string' && callId !== '') failed.add(callId)
-      return
-    }
-    if (event.type === 'user/message') {
-      const source = data.source
-      if (source && source.kind === 'skill-catalog' && Array.isArray(source.entries)) {
-        for (const entry of source.entries) {
-          if (entry && typeof entry.name === 'string' && entry.name !== '') {
-            catalog.push({ name: entry.name, description: typeof entry.description === 'string' ? entry.description : '' })
-          }
-        }
-        return
-      }
-      if (!source || source.kind !== 'skill-invocation') return
-      const skill = typeof source.name === 'string' ? source.name.trim() : ''
-      if (skill === '') return
-      usages.push({
-        skill,
-        time: typeof event.time === 'number' ? event.time : 0,
-        sessionId,
-        kind: 'user',
-        callId: '',
-        subagent,
-      })
-    }
-  }
-
-  if (Array.isArray(events)) {
-    for (const event of events) handle(event)
-    return { usages, failed, catalog }
-  }
-
-  // Raw JSONL: only lines that can carry a relevant event are parsed. The whole
-  // file is decompressed either way, but JSON parsing is the expensive half.
-  const lines = String(text).split('\n')
-  for (const line of lines) {
-    if (line === '') continue
-    const maybeCall = line.indexOf('"tool/call"') !== -1 && line.indexOf('"skill"') !== -1
-    const maybeResult = line.indexOf('"tool/result"') !== -1 && line.indexOf('"isError":true') !== -1
-    const maybeUser = line.indexOf('"skill-invocation"') !== -1
-    const maybeCatalog = line.indexOf('"skill-catalog"') !== -1
-    if (!maybeCall && !maybeResult && !maybeUser && !maybeCatalog) continue
-    let event
-    try {
-      event = JSON.parse(line)
-    } catch {
-      continue
-    }
-    handle(event)
-  }
-  return { usages, failed, catalog }
-}
-
-/**
- * Mark the usage records whose call failed.
- * @param usages - records from one session.
- * @param failed - failed call ids from the same session.
- * @returns the same array, annotated.
- */
-function annotateFailures(usages, failed) {
-  if (failed.size === 0) return usages
-  for (const usage of usages) {
-    if (usage.callId !== '' && failed.has(usage.callId)) usage.failed = true
-  }
-  return usages
-}
-
-/** Per-session fold cache, invalidated by the persistence revision. */
-const sessionCache = new Map()
-
-/** Per-session parse cache for the raw-file fallback. */
-const fileCache = new Map()
-
-/**
- * Fold one session through the persistence service.
- *
- * A session log is written as a sequence of appended zstd frames; one
- * `zlib.zstdDecompressSync` call decodes only the first frame, which silently
- * reduces a real session to its header. The persistence backend decodes the
- * whole log, so this is the primary path.
- * @param ctx - host plugin context.
- * @param header - session header from the corpus listing.
- * @param snapshot - the `stat` snapshot already fetched for this session.
- * @returns `{ usages, failed, catalog }` or null when the session cannot be read.
- */
-async function readThroughPersistence(ctx, header, snapshot) {
-  let handle = null
-  try {
-    handle = await ctx.sessionPersistence.open(header.id, 'read')
-    const result = await handle.read()
-    return foldSession(result.events, null, header.id, snapshot.header || header)
-  } catch {
-    return null
-  } finally {
-    if (handle !== null) {
-      try {
-        await handle.close()
-      } catch {
-        // A failing close must not hide the read result.
-      }
-    }
-  }
-}
-
-/**
- * Drop copies of the same usage seen in more than one session log.
- *
- * Forked sessions replay the parent's events, so a strict line count can count
- * one call twice. A tool call id is globally unique, and an inherited user
- * invocation keeps its original timestamp, so both forms dedupe exactly.
- * @param list - usage records from every session.
- * @returns the deduplicated list.
- */
-function dedupeUsages(list) {
-  const seen = new Set()
-  const out = []
-  for (const usage of list) {
-    const key =
-      usage.kind === 'agent'
-        ? usage.callId
-          ? 'a:' + usage.callId
-          : 'x:' + usage.sessionId + ':' + usage.time
-        : 'u:' + usage.skill + ':' + usage.time
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(usage)
-  }
-  return out
-}
-
-/**
- * Read one persisted session file, reusing its parse when unchanged.
- * @param id - session id.
- * @param file - absolute path.
- * @param header - session header, used only for sub-agent detection.
- * @returns {{ usages: object[], failed: Set<string> } | null}
- */
-function readPersisted(id, file, header) {
-  let info
-  try {
-    info = statSync(file)
-  } catch {
-    return null
-  }
-  const cached = fileCache.get(id)
-  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) {
-    return { usages: cached.usages, failed: cached.failed, catalog: cached.catalog || [] }
-  }
-  let text
-  try {
-    text = zstdDecompressSync(readFileSync(file)).toString('utf8')
-  } catch {
-    return null
-  }
-  const folded = foldSession(null, text, id, header)
-  fileCache.set(id, {
-    size: info.size,
-    mtimeMs: info.mtimeMs,
-    usages: folded.usages,
-    failed: folded.failed,
-    catalog: folded.catalog,
-  })
-  return folded
-}
-
-
-/**
- * Parse a `SKILL.md` YAML frontmatter well enough for the inventory.
- * Only flat `key: value` lines are needed: name, description, and
- * `disable-model-invocation`.
- * @param text - the whole file.
- * @returns the parsed keys.
- */
 function parseSkillFrontmatter(text) {
   const meta = {}
   // A CRLF or BOM-prefixed file must parse like an LF one; without this, every
@@ -565,16 +276,13 @@ function classifyOrigin(row) {
  * @param ctx - host plugin context.
  * @returns {Promise<object[]>} normalised skill rows, sorted by name.
  */
-async function readInventory(ctx, cwds, catalogHints) {
+async function readInventory(ctx) {
+  if (inventoryCache !== null && Date.now() - inventoryCache.at < 60_000) return inventoryCache.rows
+
   const byName = new Map()
-  let summaries = []
-  try {
-    summaries = await ctx.skills.list({})
-  } catch {
-    summaries = []
-  }
-  for (const summary of summaries) {
-    if (!summary || typeof summary.name !== 'string' || byName.has(summary.name)) continue
+  /** Merge one skills-service summary. */
+  const addSummary = (summary) => {
+    if (!summary || typeof summary.name !== 'string' || byName.has(summary.name)) return
     const invocation = summary.invocation || {}
     byName.set(summary.name, {
       name: summary.name,
@@ -586,19 +294,35 @@ async function readInventory(ctx, cwds, catalogHints) {
       userInvocable: invocation.userInvocable !== false,
     })
   }
+
+  let summaries = []
+  try {
+    summaries = await ctx.skills.list({})
+  } catch {
+    summaries = []
+  }
+  for (const summary of summaries) addSummary(summary)
+
   // Filesystem rows fill whatever the scoped service could not report.
-  for (const disk of readDiskSkills(cwds || [])) {
+  const cwds = []
+  try {
+    const working = ctx.get('workingDirectory')
+    if (working && typeof working.defaultDirectory === 'string' && working.defaultDirectory !== '') cwds.push(working.defaultDirectory)
+  } catch {
+    // No working-directory service in this composition: user roots still work.
+  }
+  for (const disk of readDiskSkills(cwds)) {
     if (byName.has(disk.name)) continue
     byName.set(disk.name, disk)
   }
+
   // Skills shipped inside installed plugin packages. When the service reports one
-  // as `bundled` without a path, this is what tells the panel it came from a
-  // plugin rather than from DSH itself.
+  // as `bundled`, only the file's real location tells a plugin's skill apart.
   const plugins = pluginSkillIndex()
   for (const row of byName.values()) {
     const hit = plugins.get(row.name)
     if (!hit) continue
-    if (row.path === '') row.path = hit.path
+    if (row.path === '' || row.path.indexOf(hit.packageName) === -1) row.path = hit.path
     if (row.description === '') row.description = hit.description
     if (row.provider === 'unknown' || row.provider === 'session-catalog') row.provider = hit.packageName
   }
@@ -614,141 +338,49 @@ async function readInventory(ctx, cwds, catalogHints) {
       userInvocable: true,
     })
   }
-  // The per-session catalog snapshot names plugin/preset-skills the service did
-  // not expose to this scope. Everything in it is model-invocable by definition.
-  for (const hint of catalogHints || []) {
-    if (byName.has(hint.name)) continue
-    byName.set(hint.name, {
-      name: hint.name,
-      description: hint.description,
-      source: 'bundled',
-      provider: 'session-catalog',
-      path: '',
-      modelInvocable: true,
-      userInvocable: true,
-    })
+
+  // Preset-scoped skills (the ones a bundle mounts inside each agent preset) are
+  // invisible to the global layer. Ask each preset for its scope and read the
+  // merged view; this is a service call, not a session read.
+  try {
+    const presets = await ctx.agentPresets.list()
+    for (const preset of presets) {
+      const id = preset && (preset.id || preset.name)
+      if (!id) continue
+      let scope = null
+      try {
+        scope = await ctx.agentPresets.acquireScope(id)
+        for (const summary of await ctx.skills.list({ scope: scope.key })) addSummary(summary)
+      } catch {
+        // A preset that cannot be scoped simply contributes nothing.
+      } finally {
+        if (scope && typeof scope[Symbol.asyncDispose] === 'function') {
+          try {
+            await scope[Symbol.asyncDispose]()
+          } catch {
+            // Disposal failures must not invalidate an otherwise good listing.
+          }
+        }
+      }
+    }
+  } catch {
+    // Older hosts without agent presets still get service + disk rows.
   }
-  return [...byName.values()]
+
+  const rows = [...byName.values()]
     .map((row) => ({ ...row, origin: classifyOrigin(row) }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  inventoryCache = { at: Date.now(), rows }
+  return rows
 }
+
 
 /**
  * One full scan: inventory + every session's usage records.
  * @param ctx - host plugin context.
  * @returns {Promise<object>} the scan snapshot.
  */
-async function scanAll(ctx) {
-  const startedAt = Date.now()
-  const t0 = performance.now()
-  const files = indexSessionFiles()
-  const records = await ctx.sessionQuery.listSessions()
-  const cwds = [...new Set(records.map((record) => (record && record.header ? record.header.cwd : '')).filter((cwd) => typeof cwd === 'string' && cwd !== ''))]
-  const usages = []
-  const hints = new Map()
-  let liveSessions = 0
-  let fileSessions = 0
-  let skipped = 0
-  let lastYield = performance.now()
 
-  for (const record of records) {
-    const header = record && record.header ? record.header : null
-    if (!header || typeof header.id !== 'string') continue
-    const id = header.id
-    const file = files.get(id)
-
-    let snapshot = null
-    try {
-      snapshot = await ctx.sessionPersistence.stat(header.id)
-    } catch {
-      snapshot = null
-    }
-    const revision = snapshot === null ? '' : String(snapshot.revision)
-    const cached = revision === '' ? undefined : sessionCache.get(id)
-    if (cached !== undefined && cached.revision === revision) {
-      if (record.live) liveSessions += 1
-      else fileSessions += 1
-      usages.push(...cached.usages)
-      for (const hint of cached.catalog || []) if (!hints.has(hint.name)) hints.set(hint.name, hint)
-      continue
-    }
-
-    try {
-      let folded = null
-      if (record.live) {
-        liveSessions += 1
-        const read = await ctx.sessionQuery.readSession(header.id)
-        folded = foldSession(read.events, null, id, read.session || header)
-      } else {
-        fileSessions += 1
-        if (snapshot !== null) folded = await readThroughPersistence(ctx, header, snapshot)
-        if (folded === null && file) folded = readPersisted(id, file, header)
-      }
-      if (folded === null) {
-        skipped += 1
-        continue
-      }
-      const annotated = annotateFailures(folded.usages, folded.failed)
-      if (revision !== '') {
-        sessionCache.set(id, { revision, usages: annotated, failed: folded.failed, catalog: folded.catalog })
-      }
-      usages.push(...annotated)
-      for (const hint of folded.catalog) if (!hints.has(hint.name)) hints.set(hint.name, hint)
-    } catch {
-      skipped += 1
-    }
-
-    // Keep the host responsive: one scan is many sessions, and a long synchronous
-    // stretch would stall the GUI's other work.
-    if (performance.now() - lastYield > 25) {
-      lastYield = performance.now()
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-  }
-
-  const inventory = await readInventory(ctx, cwds, [...hints.values()])
-
-  return {
-    startedAt,
-    scanMs: Math.round(performance.now() - t0),
-    sessions: records.length,
-    liveSessions,
-    fileSessions,
-    skipped,
-    inventory,
-    usages: dedupeUsages(usages),
-  }
-}
-
-/** Shared scan cache: one scan feeds every window asked for within its TTL. */
-let cachedScan = null
-let inFlight = null
-
-/**
- * Get a scan no older than {@link SCAN_TTL_MS}.
- * @param ctx - host plugin context.
- * @returns {Promise<object>} the scan snapshot.
- */
-async function currentScan(ctx) {
-  if (cachedScan !== null && Date.now() - cachedScan.at < SCAN_TTL_MS) return cachedScan.scan
-  if (inFlight !== null) return inFlight
-  inFlight = (async () => {
-    const scan = await scanAll(ctx)
-    cachedScan = { at: Date.now(), scan }
-    return scan
-  })()
-  try {
-    return await inFlight
-  } finally {
-    inFlight = null
-  }
-}
-
-/**
- * Inclusive cutoff for a window name.
- * @param window - `all` | `today` | `7d` | `30d`.
- * @returns epoch milliseconds.
- */
 function cutoffFor(window) {
   if (window === 'today') {
     const start = new Date()
@@ -771,101 +403,7 @@ function normalizeWindow(value) {
  * @param window - normalised window name.
  * @returns the API payload.
  */
-function buildPayload(scan, window) {
-  const cutoff = cutoffFor(window)
-  const bySkill = new Map()
-  const windowSessions = new Set()
-  let calls = 0
-  let failedCalls = 0
-  let subagentCalls = 0
 
-  for (const usage of scan.usages) {
-    if (usage.time < cutoff) continue
-    calls += 1
-    if (usage.failed) failedCalls += 1
-    if (usage.subagent) subagentCalls += 1
-    windowSessions.add(usage.sessionId)
-    let row = bySkill.get(usage.skill)
-    if (!row) {
-      row = { total: 0, agent: 0, user: 0, failed: 0, subagent: 0, lastUsed: 0, sessions: new Set() }
-      bySkill.set(usage.skill, row)
-    }
-    row.total += 1
-    if (usage.kind === 'user') row.user += 1
-    else row.agent += 1
-    if (usage.failed) row.failed += 1
-    if (usage.subagent) row.subagent += 1
-    if (usage.time > row.lastUsed) row.lastUsed = usage.time
-    row.sessions.add(usage.sessionId)
-  }
-
-  const installed = new Set(scan.inventory.map((row) => row.name))
-  const skills = scan.inventory.map((row) => {
-    const agg = bySkill.get(row.name)
-    return {
-      ...row,
-      total: agg ? agg.total : 0,
-      agent: agg ? agg.agent : 0,
-      user: agg ? agg.user : 0,
-      failed: agg ? agg.failed : 0,
-      subagent: agg ? agg.subagent : 0,
-      sessions: agg ? agg.sessions.size : 0,
-      lastUsed: agg ? agg.lastUsed : 0,
-      share: agg && calls > 0 ? agg.total / calls : 0,
-    }
-  })
-  skills.sort((a, b) => (b.total - a.total) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-
-  const uninstalled = []
-  for (const [skill, agg] of bySkill) {
-    if (installed.has(skill)) continue
-    uninstalled.push({
-      name: skill,
-      total: agg.total,
-      agent: agg.agent,
-      user: agg.user,
-      failed: agg.failed,
-      subagent: agg.subagent,
-      sessions: agg.sessions.size,
-      lastUsed: agg.lastUsed,
-      share: calls > 0 ? agg.total / calls : 0,
-      source: 'uninstalled',
-      provider: '',
-      path: '',
-      description: '',
-      modelInvocable: false,
-      userInvocable: false,
-      origin: { kind: 'uninstalled', label: '' },
-    })
-  }
-  uninstalled.sort((a, b) => b.total - a.total)
-
-  const used = skills.filter((row) => row.total > 0).length
-
-  return {
-    generatedAt: Date.now(),
-    scanMs: scan.scanMs,
-    window,
-    cutoff,
-    totals: {
-      installed: skills.length,
-      used,
-      unused: skills.length - used,
-      calls,
-      sessions: windowSessions.size,
-      failed: failedCalls,
-      subagent: subagentCalls,
-      scannedSessions: scan.sessions,
-      liveSessions: scan.liveSessions,
-      fileSessions: scan.fileSessions,
-      skippedSessions: scan.skipped,
-    },
-    skills,
-    uninstalled,
-  }
-}
-
-/** Write one JSON response. */
 function writeJson(res, status, body) {
   const text = JSON.stringify(body)
   res.writeHead(status, {
@@ -880,7 +418,256 @@ function writeJson(res, status, body) {
  * Host plugin body: register the statistics route.
  * @param ctx - host plugin context.
  */
+
+
+/**
+ * Local counter file. Only aggregate numbers are stored: per skill, per local
+ * day, the call counts and the sessions that used it.
+ * @returns the absolute path.
+ */
+function storePath() {
+  return join(dshHome(), 'storages', 'dsh-skill-stats', 'usage.json')
+}
+
+/** Inventory cache; skills change rarely, the panel reloads often. */
+let inventoryCache = null
+
+/** The counter state. */
+let store = { version: 1, startedAt: null, skills: {} }
+
+/** Pending debounce timer for consecutive writes. */
+let flushTimer = null
+
+/** Serialize the current state to disk (atomic replace). */
+function flushStore() {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  try {
+    const file = storePath()
+    mkdirSync(join(dshHome(), 'storages', 'dsh-skill-stats'), { recursive: true })
+    const temp = file + '.tmp'
+    writeFileSync(temp, JSON.stringify(store))
+    renameSync(temp, file)
+  } catch {
+    // The panel is a diagnostic; a failed write must not take the host down.
+  }
+}
+
+/** Debounced flush, so a busy step writes once. */
+function scheduleFlush() {
+  if (flushTimer !== null) return
+  flushTimer = setTimeout(() => {
+    flushTimer = null
+    flushStore()
+  }, 800)
+  if (typeof flushTimer.unref === 'function') flushTimer.unref()
+}
+
+/** Load the counter file, creating a fresh state on first run. */
+function loadStore() {
+  let loaded = null
+  try {
+    loaded = JSON.parse(readFileSync(storePath(), 'utf8'))
+  } catch {
+    loaded = null
+  }
+  const valid = loaded && typeof loaded === 'object' && loaded.skills && typeof loaded.skills === 'object'
+  if (valid) {
+    store = { version: 1, startedAt: Number(loaded.startedAt) || Date.now(), skills: loaded.skills }
+    return
+  }
+  store = { version: 1, startedAt: Date.now(), skills: {} }
+  flushStore()
+}
+
+/** Local calendar day key for a timestamp. */
+function dayKey(time) {
+  const date = new Date(time)
+  const pad = (value) => (value < 10 ? '0' + value : String(value))
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+}
+
+/**
+ * Record one use.
+ * @param skill - skill name.
+ * @param kind - `agent` or `user`.
+ * @param sessionId - owning session, '' when unknown.
+ * @param failed - whether the call failed.
+ */
+function bump(skill, kind, sessionId, failed) {
+  const name = String(skill)
+  if (name === '' || name.length > 200) return
+  const now = Date.now()
+  let entry = store.skills[name]
+  if (!entry) {
+    entry = { days: {}, last: 0 }
+    store.skills[name] = entry
+  }
+  const day = dayKey(now)
+  let bucket = entry.days[day]
+  if (!bucket) {
+    bucket = { total: 0, agent: 0, user: 0, failed: 0, last: 0, sessions: [] }
+    entry.days[day] = bucket
+  }
+  bucket.total += 1
+  if (kind === 'user') bucket.user += 1
+  else bucket.agent += 1
+  if (failed) bucket.failed += 1
+  if (now > bucket.last) bucket.last = now
+  if (sessionId !== '' && bucket.sessions.indexOf(sessionId) === -1) bucket.sessions.push(sessionId)
+  if (now > entry.last) entry.last = now
+  scheduleFlush()
+}
+
+
+/**
+ * Aggregate the counter state for one window.
+ * @param state - the counter state.
+ * @param inventory - installed skill rows.
+ * @param window - normalised window name.
+ * @returns the API payload.
+ */
+function buildPayload(state, inventory, window) {
+  const cutoff = cutoffFor(window)
+  const bySkill = new Map()
+  const windowSessions = new Set()
+  let calls = 0
+  let failedCalls = 0
+
+  for (const [skill, entry] of Object.entries((state && state.skills) || {})) {
+    let total = 0
+    let agent = 0
+    let user = 0
+    let failed = 0
+    let last = 0
+    const sessions = new Set()
+    for (const [day, bucket] of Object.entries(entry.days || {})) {
+      const dayStart = new Date(day + 'T00:00:00').getTime()
+      if (Number.isFinite(dayStart) && dayStart + DAY_MS <= cutoff) continue
+      total += bucket.total || 0
+      agent += bucket.agent || 0
+      user += bucket.user || 0
+      failed += bucket.failed || 0
+      if (bucket.last > last) last = bucket.last
+      for (const id of bucket.sessions || []) sessions.add(id)
+    }
+    if (total === 0) continue
+    calls += total
+    failedCalls += failed
+    for (const id of sessions) windowSessions.add(id)
+    bySkill.set(skill, { total, agent, user, failed, sessions: sessions.size, lastUsed: last })
+  }
+
+  const installed = new Set(inventory.map((row) => row.name))
+  const rows = inventory.map((row) => {
+    const agg = bySkill.get(row.name)
+    return {
+      ...row,
+      total: agg ? agg.total : 0,
+      agent: agg ? agg.agent : 0,
+      user: agg ? agg.user : 0,
+      failed: agg ? agg.failed : 0,
+      sessions: agg ? agg.sessions : 0,
+      lastUsed: agg ? agg.lastUsed : 0,
+      share: agg && calls > 0 ? agg.total / calls : 0,
+    }
+  })
+  rows.sort((a, b) => (b.total - a.total) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+
+  const uninstalled = []
+  for (const [skill, agg] of bySkill) {
+    if (installed.has(skill)) continue
+    uninstalled.push({
+      name: skill,
+      description: '',
+      source: 'uninstalled',
+      provider: '',
+      path: '',
+      modelInvocable: false,
+      userInvocable: false,
+      origin: { kind: 'uninstalled', label: '' },
+      ...agg,
+      share: calls > 0 ? agg.total / calls : 0,
+    })
+  }
+  uninstalled.sort((a, b) => b.total - a.total)
+
+  const used = rows.filter((row) => row.total > 0).length
+  return {
+    generatedAt: Date.now(),
+    startedAt: state && state.startedAt ? state.startedAt : 0,
+    window,
+    cutoff,
+    totals: {
+      installed: rows.length,
+      used,
+      unused: rows.length - used,
+      calls,
+      sessions: windowSessions.size,
+      failed: failedCalls,
+      scannedSessions: 0,
+      liveSessions: 0,
+      fileSessions: 0,
+      skippedSessions: 0,
+    },
+    skills: rows,
+    uninstalled,
+  }
+}
+
+
+/**
+ * Host plugin body: load the counters, subscribe to the two usage events, and
+ * serve the statistics route.
+ * @param ctx - host plugin context.
+ */
 export function apply(ctx) {
+  loadStore()
+
+  ctx.on('skills/change', () => {
+    inventoryCache = null
+  }, 'dsh-skill-stats: invalidate inventory')
+
+  // An agent calling the `skill` tool. `arguments` is already parsed here.
+  ctx.on(
+    'tools/result',
+    (exec, result) => {
+      try {
+        if (!exec || exec.name !== 'skill') return
+        const args = exec.arguments
+        const skill = args && typeof args === 'object' ? String(args.name || '') : ''
+        if (skill === '') return
+        const sessionId = exec.agent && exec.agent.id ? String(exec.agent.id) : ''
+        bump(skill, 'agent', sessionId, Boolean(result && result.isError))
+      } catch {
+        // Counting must never disturb a tool call.
+      }
+    },
+    'dsh-skill-stats: skill tool results',
+  )
+
+  // A user invoking a skill as `/name`; the host injects it as a user message.
+  ctx.on(
+    'session/event',
+    (session, event) => {
+      try {
+        if (!event || event.type !== 'user/message') return
+        const source = event.data && event.data.source
+        if (!source || source.kind !== 'skill-invocation') return
+        const skill = String(source.name || '')
+        if (skill === '') return
+        const header = session && session.header
+        const sessionId = header && header.id ? String(header.id) : ''
+        bump(skill, 'user', sessionId, false)
+      } catch {
+        // Counting must never disturb the session.
+      }
+    },
+    'dsh-skill-stats: skill invocations',
+  )
+
   ctx.effect(
     () =>
       ctx.webServer.register({
@@ -895,8 +682,8 @@ export function apply(ctx) {
           try {
             const url = new URL(req.url || ROUTE, 'http://localhost')
             const window = normalizeWindow(url.searchParams.get('window'))
-            const scan = await currentScan(ctx)
-            writeJson(res, 200, buildPayload(scan, window))
+            const inventory = await readInventory(ctx)
+            writeJson(res, 200, buildPayload(store, inventory, window))
           } catch (error) {
             writeJson(res, 500, { error: String((error && error.message) || error) })
           }
@@ -904,7 +691,8 @@ export function apply(ctx) {
       }),
     'dsh-skill-stats: statistics route',
   )
+
+  ctx.effect(() => () => flushStore(), 'dsh-skill-stats: flush counters on unload')
 }
 
-// Exported for focused tests / diagnostics; not part of the route contract.
-export { scanAll, buildPayload, foldSession, normalizeWindow, cutoffFor }
+export { buildPayload, normalizeWindow, cutoffFor }
