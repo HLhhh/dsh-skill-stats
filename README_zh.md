@@ -123,7 +123,7 @@ dsh plugin --profile web remove dsh-skill-stats
 ## 开发
 
 ```sh
-npm test          # node --test test/ —— 25 个测试，无第三方依赖
+npm test          # node --test test/ —— 27 个测试，无第三方依赖
 npm pack --dry-run
 ```
 
@@ -133,7 +133,7 @@ npm pack --dry-run
 
 ```
 index.js            适配器：把宿主事件与 /dsh-skill-stats/api 接到模块上
-lib/counter.js      计数：record / snapshot / daily / reset / flush
+lib/counter.js      计数：record / snapshot / flush
 lib/inventory.js    已装清单：list / invalidate
 lib/payload.js      纯函数：把聚合结果拼成接口返回
 lib/window.js       日期与时间窗计算
@@ -144,7 +144,7 @@ cordis.patch.yml    一行 Loader 条目
 locale/             插件管理页标题/描述（en、zh）
 icon.svg            插件与侧栏图标
 docs/               截图
-test/*.test.mjs     25 个零依赖测试（npm test）
+test/*.test.mjs     27 个零依赖测试（npm test）
 ```
 
 ## 改动如何合入

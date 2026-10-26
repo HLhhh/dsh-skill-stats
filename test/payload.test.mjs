@@ -31,6 +31,7 @@ test('shapes rows, shares and the uninstalled bucket', () => {
   assert.equal(payload.totals.calls, 3)
   assert.equal(payload.totals.sessions, 2)
   assert.equal(payload.totals.failed, 1)
+  assert.deepEqual(Object.keys(payload.totals).sort(), ['calls', 'failed', 'installed', 'sessions', 'unused', 'used'])
 
   const used = payload.skills.find((row) => row.name === 'grilling')
   assert.equal(used.total, 2)

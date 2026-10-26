@@ -83,6 +83,30 @@ test('reads ~/.agents/skills from the real user home, not from DSH_HOME', async 
   }
 })
 
+test('a throwing preset service is reported through diagnostics', async () => {
+  const home = tempDir()
+  try {
+    const { createDiagnostics } = await import('../lib/diagnostics.js')
+    const diagnostics = createDiagnostics()
+    const inventory = createInventory({
+      skills: { async list() { return [] } },
+      presets: {
+        async list() {
+          throw new Error('preset registry offline')
+        },
+      },
+      dshHome: home.dir,
+      clock: fakeClock(),
+      diagnostics,
+    })
+    await inventory.list()
+    const scopes = diagnostics.list().map((entry) => entry.scope)
+    assert.ok(scopes.includes('inventory.presets-list'), `got ${scopes.join(',')}`)
+  } finally {
+    home.cleanup()
+  }
+})
+
 test('caches the listing and invalidates on demand', async () => {
   const home = tempDir()
   try {

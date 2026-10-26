@@ -4,18 +4,19 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] - 2026-10-26
+## [0.3.0] - 2026-10-26
 
-Internal restructuring plus two small API tidy-ups; counting semantics are unchanged.
+Internal restructuring. Counting behaviour is the same, but the package's
+exported API changed, so this is a minor release rather than a patch.
 
 ### Changed
 
 - The host half is split into modules behind small interfaces:
-  `lib/counter.js` (record / snapshot / daily / reset / flush),
-  `lib/inventory.js` (list / invalidate), `lib/payload.js` (pure),
-  `lib/window.js` (day and window math), `lib/skills-md.js` (frontmatter and
-  origin classification). `index.js` is now a ~150-line adapter that only wires
-  host events and the route.
+  `lib/counter.js` (record / snapshot / flush), `lib/inventory.js`
+  (list / invalidate), `lib/payload.js` (pure), `lib/window.js` (day and window
+  maths), `lib/skills-md.js` (frontmatter and origin classification),
+  `lib/diagnostics.js` (bounded record of swallowed failures). `index.js` is now
+  an adapter that only wires host events and the route.
 - Dependencies are accepted instead of created: the counter receives its
   directory and clock, the inventory receives its services, directories and
   clock. Tests run against temporary directories with a fake clock.
@@ -23,26 +24,29 @@ Internal restructuring plus two small API tidy-ups; counting semantics are uncha
   the counter wrote.
 - The two inventory caches (service listing and plugin-package index) are now
   owned by one module and invalidated together on `skills/change`.
-- Swallowed failures now report to a bounded diagnostics sink
-  (`lib/diagnostics.js`) instead of disappearing; the API payload carries them as
-  a `diagnostics` array. Missing files on first run are not treated as failures.
-- API tidy-up: the payload no longer carries the scanner-era zero fields
-  (`scannedSessions`, `liveSessions`, `fileSessions`, `skippedSessions`), which
-  the panel never read after 0.2.0. Malformed stored day keys are now ignored
-  instead of being counted.
-
-### Added
-
-- 23 dependency-free tests run by `node --test test/`: counter (windows,
-  persistence, reset, sessions, failures), inventory (four sources,
-  cache/invalidate), payload (shares, uninstalled bucket), frontmatter and origin
-  classification (CRLF/BOM, plugin labels), diagnostics (aggregation, bounds,
-  real failures reported, benign absences ignored), route wiring (event → count →
-  payload → flush), and the client bundle contract.
+- Swallowed failures report to the new diagnostics sink and reach the API payload
+  as a `diagnostics` array; missing files on first run are not failures.
+- API tidy-up: `totals` no longer carries the scanner-era zero fields
+  (`scannedSessions`, `liveSessions`, `fileSessions`, `skippedSessions`) that the
+  panel never read after 0.2.0. Malformed stored day keys are ignored instead of
+  being counted.
 
 ### Removed
 
+- The package entry no longer re-exports `buildPayload`, `normalizeWindow` and
+  `cutoffFor`; those were test conveniences. Import `lib/*.js` directly.
+- `createCounter` exposes `record`, `snapshot` and `flush` only; `daily()` and
+  `reset()` were removed until a feature consumes them.
 - `test/smoke.mjs`, replaced by the `node:test` suite.
+
+### Added
+
+- 27 dependency-free tests run by `node --test test/`: counter (windows,
+  persistence, injected clock, sessions, failures), inventory (four sources,
+  user-home vs DSH home, cache/invalidate, failing preset service), payload
+  (shares, uninstalled bucket, pinned totals shape), frontmatter and origin
+  classification (CRLF/BOM, plugin labels), diagnostics (aggregation, bounds,
+  real failures vs benign absences), route wiring, and the client bundle.
 
 ## [0.2.0] - 2026-10-26
 

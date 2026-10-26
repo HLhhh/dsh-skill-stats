@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createCounter } from '../lib/counter.js'
 import { fakeClock, tempDir } from './support.mjs'
@@ -52,7 +53,6 @@ test('windows drop days outside the cutoff', () => {
     assert.equal(counter.snapshot('7d').calls, 1)
     assert.equal(counter.snapshot('7d').perSkill.has('old'), false)
     assert.equal(counter.snapshot('all').calls, 2)
-    assert.deepEqual(counter.daily('all').map((entry) => entry.total), [1, 1])
   } finally {
     temp.cleanup()
   }
@@ -69,10 +69,23 @@ test('persists across instances and resets the baseline', () => {
     assert.equal(reopened.snapshot('all').startedAt, counter.snapshot('all').startedAt)
 
     clock.advance(1000)
-    const startedAt = reopened.reset()
-    assert.equal(startedAt, clock())
-    assert.equal(reopened.snapshot('all').calls, 0)
-    assert.equal(createCounter({ dir: join(temp.dir, 'storages', 'dsh-skill-stats'), clock }).snapshot('all').calls, 0)
+    const third = createCounter({ dir: join(temp.dir, 'storages', 'dsh-skill-stats'), clock })
+    assert.equal(third.snapshot('all').calls, 1)
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('a stored file without startedAt adopts the injected clock', () => {
+  const temp = tempDir()
+  try {
+    const dir = join(temp.dir, 'storages', 'dsh-skill-stats')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'usage.json'), JSON.stringify({ version: 1, skills: {} }))
+    const clock = fakeClock(7777)
+    const counter = createCounter({ dir, clock })
+    assert.equal(counter.snapshot('all').startedAt, 7777)
+    assert.equal(counter.snapshot('all').calls, 0)
   } finally {
     temp.cleanup()
   }

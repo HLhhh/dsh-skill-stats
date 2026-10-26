@@ -10,7 +10,7 @@
 
 ![Skill stats panel, light theme](./docs/preview-light.jpg)
 
-*Screenshots use sample data; the panel itself reads your own local session logs.*
+*Screenshots use sample data; the panel reads its own counter file — never a session log.*
 
 ## Why
 
@@ -123,7 +123,7 @@ The result is cached for a minute and invalidated by `skills/change`.
 ## Development
 
 ```sh
-npm test          # node --test test/ — 25 tests, no dependencies
+npm test          # node --test test/ — 27 tests, no dependencies
 npm pack --dry-run
 ```
 
@@ -134,7 +134,7 @@ Repository layout:
 
 ```
 index.js            adapter: wires host events and /dsh-skill-stats/api
-lib/counter.js      counting: record / snapshot / daily / reset / flush
+lib/counter.js      counting: record / snapshot / flush
 lib/inventory.js    installed skills: list / invalidate
 lib/payload.js      pure row shaping for the API response
 lib/window.js       day and window maths
@@ -145,7 +145,7 @@ cordis.patch.yml    one Loader row
 locale/             plugin-manager title/description (en, zh)
 icon.svg            plugin and sidebar icon
 docs/               screenshots
-test/*.test.mjs     25 dependency-free tests (npm test)
+test/*.test.mjs     27 dependency-free tests (npm test)
 ```
 
 ## How changes land
