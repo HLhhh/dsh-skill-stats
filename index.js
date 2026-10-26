@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { createCounter } from './lib/counter.js'
 import { createDiagnostics } from './lib/diagnostics.js'
 import { createInventory } from './lib/inventory.js'
+import { createUsageTracker } from './lib/usage-tracker.js'
 import { buildPayload } from './lib/payload.js'
 import { normalizeWindow } from './lib/window.js'
 
@@ -67,42 +68,21 @@ export function apply(ctx) {
     diagnostics,
   })
 
-  // An agent calling the `skill` tool. `arguments` is already parsed here.
-  ctx.on(
-    'tools/result',
-    (exec, result) => {
-      try {
-        if (!exec || exec.name !== 'skill') return
-        const args = exec.arguments
-        const skill = args && typeof args === 'object' ? String(args.name || '') : ''
-        if (skill === '') return
-        const sessionId = exec.agent && exec.agent.id ? String(exec.agent.id) : ''
-        counter.record({ skill, kind: 'agent', sessionId, failed: Boolean(result && result.isError) })
-      } catch {
-        // Counting must never disturb a tool call.
-      }
-    },
-    'dsh-skill-stats: skill tool results',
-  )
-
-  // A user invoking a skill as `/name`; the host injects it as a user message.
+  // Turn-scoped counting: a load, a `/name` invocation, or a later mention of an
+  // already-loaded skill counts once per user request.
+  const tracker = createUsageTracker({
+    onUse: (use) => counter.record({ skill: use.skill, kind: use.kind, sessionId: use.sessionId, failed: use.failed }),
+  })
   ctx.on(
     'session/event',
     (session, event) => {
       try {
-        if (!event || event.type !== 'user/message') return
-        const source = event.data && event.data.source
-        if (!source || source.kind !== 'skill-invocation') return
-        const skill = String(source.name || '')
-        if (skill === '') return
-        const header = session && session.header
-        const sessionId = header && header.id ? String(header.id) : ''
-        counter.record({ skill, kind: 'user', sessionId })
+        tracker.handle(session, event)
       } catch {
         // Counting must never disturb a session.
       }
     },
-    'dsh-skill-stats: skill invocations',
+    'dsh-skill-stats: session events',
   )
 
   // The skill catalog changed: drop both cached views of the inventory.

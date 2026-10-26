@@ -4,6 +4,35 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-26
+
+### Changed
+
+- **Counting is now per user request (turn)**: a given skill counts at most once
+  per turn. Three signals count — the agent loading the skill, the user invoking
+  it as `/name`, and the user naming an already-loaded skill in a later turn
+  (`code-review`, `code review`, `codereview` and `CodeReview` all match).
+  Previously only loads counted, so asking for the same skill twice in one
+  session without reloading it produced one use instead of two.
+- Session events are folded by the new `lib/usage-tracker.js`; name matching is
+  the pure `lib/mentions.js`. `index.js` only wires the event to the tracker.
+- The failure flag now comes from the result of the matching skill call, not from
+  a separate `tools/result` listener.
+
+### Added
+
+- 10 tests for the new behaviour: per-turn de-duplication, later-turn mentions,
+  mentions limited to already-loaded skills, `/name` de-duplication, failed
+  calls, forgiving/short-name matching. 37 tests in total.
+
+### Notes
+
+- No UI change, so the screenshots in `docs/` still apply.
+- Counting remains live-only: no session log is read, and history before
+  enablement is still invisible.
+- The per-turn de-duplication state is in memory; a host restart never replays
+  old events, so past counts are unaffected.
+
 ## [0.3.0] - 2026-10-26
 
 Internal restructuring. Counting inputs are unchanged (live host events only),

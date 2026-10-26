@@ -23,16 +23,17 @@ This panel answers both with the smallest honest dataset: the two moments where 
 
 ## What counts as one use
 
-Counting starts the first moment the plugin is enabled. Two live host events are the only inputs:
+Counting starts the first moment the plugin is enabled, and **no session log is ever read**. One **user request (a turn)** counts at most one use of a given skill, whichever of these signals appears in it:
 
-1. an agent calls the `skill` tool;
-2. you invoke a skill with `/name`.
+1. the agent loads the skill (`skill` tool);
+2. you invoke it as `/name`;
+3. you name it again in a later turn, provided it was already loaded earlier in this session — `code-review`, `code review`, `codereview` and `CodeReview` all match.
 
-Nothing else counts, and **no session log is ever read** — not on open, not in the background. Sessions that happened before you installed the plugin are invisible by design.
+Everything else is ignored: a skill merely listed in the prompt, an agent reading a `SKILL.md`, or opening the panel.
 
 | Column | Meaning |
 | --- | --- |
-| Calls | Number of the two events since enablement, inside the selected window |
+| Calls | Turns in the selected window that used the skill |
 | Sessions | Distinct conversations that used the skill |
 | Share | This skill's calls ÷ every counted call in the current filter |
 | Last used | When the most recent use happened |
@@ -40,7 +41,7 @@ Nothing else counts, and **no session log is ever read** — not on open, not in
 
 ## Features
 
-- **Live counting, no log parsing.** Counts come from the host's own events (`tools/result` and `session/event`), are debounced into a small JSON file, and survive restarts. Opening the panel costs one file read.
+- **Live counting, no log parsing.** Counts come from the host's committed session events, are de-duplicated per user request, debounced into a small JSON file, and survive restarts. Opening the panel costs one file read.
 - **Every installed skill is listed**, including skills that are only callable as `/name` (they carry a small `manual` tag) and plugin-provided skills.
 - **Honest source labels.** `bundled` in the skills service only means "from a bundled skill root", so origin is resolved from the file's real location: a plugin's own `skill/`/`skills/` directory is labelled with that plugin's package name.
 - **Time windows and filters**: all time, today, 7 days, 30 days; filter by origin; search; "never used only"; optionally include skills that are no longer installed.
@@ -115,6 +116,8 @@ The result is cached for a minute and invalidated by `skills/change`.
 ## Known limitations
 
 - **No history.** Counting begins when the plugin is first enabled; anything before that is not counted — by design, because it would require reading old session logs.
+- A mention only counts for a skill this session has already loaded; after a plugin restart that set is rebuilt from new loads.
+- Name matching is intentionally forgiving, so a skill named in passing still counts once for that turn; short names (`pr`, `tdd`) must appear as a whole token.
 - Deleting `$DSH_HOME/storages/dsh-skill-stats/usage.json` resets the baseline; reload the plugin afterwards so the new file is created at that moment.
 - A skill that is used but cannot be discovered by any inventory source appears under "uninstalled" (toggle it in the filter bar).
 - Duplicate skill names are resolved to the effective one; the shadowed copy is not shown.
@@ -140,6 +143,8 @@ lib/payload.js      pure row shaping for the API response
 lib/window.js       day and window maths
 lib/skills-md.js    frontmatter parsing + origin classification (pure)
 lib/diagnostics.js  bounded record of swallowed failures
+lib/usage-tracker.js turn-scoped counting over session events
+lib/mentions.js     forgiving skill-name matching (pure)
 client.js           browser half: sidebar icon + panel (plain JS, no build)
 cordis.patch.yml    one Loader row
 locale/             plugin-manager title/description (en, zh)
