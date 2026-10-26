@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-stats",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Skill usage statistics for DeepSeek Harness: every installed skill with its use count, session coverage, and share of all skill use.",
   "type": "module",
   "main": "index.js",

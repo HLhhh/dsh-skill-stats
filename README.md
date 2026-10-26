@@ -42,7 +42,8 @@ Nothing else counts. A skill merely being listed in the prompt, an agent `read`-
 
 - **Every installed skill is listed**, including skills that are only callable as `/name` (they carry a small `manual` tag) and plugin-provided skills.
 - **Honest source labels.** `bundled` in the skills service only means "from a bundled skill root", so origin is resolved from the file's real location: a plugin's own `skill/`/`skills/` directory is labelled with that plugin's package name.
-- **Never a stale snapshot.** The panel rescans on every open and every five seconds while open; finished session files are re-parsed only when they change, so a rescan costs milliseconds in the steady state.
+- **Never a stale snapshot.** The panel rescans on every open and every five seconds while open; sessions are cached per persistence revision, so only the ones that changed are re-read (a warm scan is ~166 ms).
+- **Reads logs correctly.** Finished sessions go through the host's `sessionPersistence` service rather than a single zstd decode — a session log is a sequence of appended frames, and a one-shot `zstdDecompressSync` only returns the first one.
 - **Time windows and filters**: all time, today, 7 days, 30 days; filter by origin; search; "never used only"; optionally include skills that are no longer installed.
 - **Fork-aware.** Continued/forked sessions replay the parent's events; inherited events and duplicate call ids are dropped so one call is never counted twice.
 - **Local only.** It reads your own session logs. No network requests, no telemetry.

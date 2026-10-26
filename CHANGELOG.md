@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-26
+
+### Fixed
+
+- **Finished sessions are read through the session persistence service.** A
+  session log is a sequence of appended zstd frames, and one
+  `zlib.zstdDecompressSync` call decodes only the first frame. On the Node 24
+  runtime shipped with the Desktop app that reduced most finished sessions to
+  their 313-byte header, so their skill usage silently disappeared from the
+  panel. Measured on a 93-session corpus: 24 counted uses before, 29 after —
+  matching an independent raw scan.
+- Rescans now cache per session by the persistence revision instead of the file
+  mtime, over both live and finished sessions. A warm scan drops from ~1.3 s to
+  ~166 ms.
+
 ## [0.1.0] - 2026-10-25
 
 ### Added

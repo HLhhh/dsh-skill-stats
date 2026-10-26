@@ -27,7 +27,7 @@ import { zstdDecompressSync } from 'node:zlib'
 export const name = 'dsh-skill-stats'
 
 /** Services the host half needs; a composition without them leaves the row inactive. */
-export const inject = ['webServer', 'skills', 'sessionQuery']
+export const inject = ['webServer', 'skills', 'sessionQuery', 'sessionPersistence']
 
 /** Route the browser half reads. Same-origin, so the GUI's own auth applies. */
 export const ROUTE = '/dsh-skill-stats/api'
@@ -214,8 +214,42 @@ function annotateFailures(usages, failed) {
   return usages
 }
 
-/** Per-session parse cache: appended files invalidate on size or mtime change. */
+/** Per-session fold cache, invalidated by the persistence revision. */
+const sessionCache = new Map()
+
+/** Per-session parse cache for the raw-file fallback. */
 const fileCache = new Map()
+
+/**
+ * Fold one session through the persistence service.
+ *
+ * A session log is written as a sequence of appended zstd frames; one
+ * `zlib.zstdDecompressSync` call decodes only the first frame, which silently
+ * reduces a real session to its header. The persistence backend decodes the
+ * whole log, so this is the primary path.
+ * @param ctx - host plugin context.
+ * @param header - session header from the corpus listing.
+ * @param snapshot - the `stat` snapshot already fetched for this session.
+ * @returns `{ usages, failed, catalog }` or null when the session cannot be read.
+ */
+async function readThroughPersistence(ctx, header, snapshot) {
+  let handle = null
+  try {
+    handle = await ctx.sessionPersistence.open(header.id, 'read')
+    const result = await handle.read()
+    return foldSession(result.events, null, header.id, snapshot.header || header)
+  } catch {
+    return null
+  } finally {
+    if (handle !== null) {
+      try {
+        await handle.close()
+      } catch {
+        // A failing close must not hide the read result.
+      }
+    }
+  }
+}
 
 /**
  * Drop copies of the same usage seen in more than one session log.
@@ -259,7 +293,7 @@ function readPersisted(id, file, header) {
   }
   const cached = fileCache.get(id)
   if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) {
-    return { usages: cached.usages, failed: cached.failed }
+    return { usages: cached.usages, failed: cached.failed, catalog: cached.catalog || [] }
   }
   let text
   try {
@@ -273,6 +307,7 @@ function readPersisted(id, file, header) {
     mtimeMs: info.mtimeMs,
     usages: folded.usages,
     failed: folded.failed,
+    catalog: folded.catalog,
   })
   return folded
 }
@@ -621,29 +656,49 @@ async function scanAll(ctx) {
     if (!header || typeof header.id !== 'string') continue
     const id = header.id
     const file = files.get(id)
+
+    let snapshot = null
     try {
+      snapshot = await ctx.sessionPersistence.stat(header.id)
+    } catch {
+      snapshot = null
+    }
+    const revision = snapshot === null ? '' : String(snapshot.revision)
+    const cached = revision === '' ? undefined : sessionCache.get(id)
+    if (cached !== undefined && cached.revision === revision) {
+      if (record.live) liveSessions += 1
+      else fileSessions += 1
+      usages.push(...cached.usages)
+      for (const hint of cached.catalog || []) if (!hints.has(hint.name)) hints.set(hint.name, hint)
+      continue
+    }
+
+    try {
+      let folded = null
       if (record.live) {
         liveSessions += 1
-        const snapshot = await ctx.sessionQuery.readSession(header.id)
-        const folded = foldSession(snapshot.events, null, id, snapshot.session || header)
-        usages.push(...annotateFailures(folded.usages, folded.failed))
-        for (const hint of folded.catalog) if (!hints.has(hint.name)) hints.set(hint.name, hint)
-      } else if (file) {
-        fileSessions += 1
-        const folded = readPersisted(id, file, header)
-        if (folded === null) {
-          skipped += 1
-          continue
-        }
-        usages.push(...annotateFailures(folded.usages, folded.failed))
-        for (const hint of folded.catalog) if (!hints.has(hint.name)) hints.set(hint.name, hint)
+        const read = await ctx.sessionQuery.readSession(header.id)
+        folded = foldSession(read.events, null, id, read.session || header)
       } else {
-        skipped += 1
+        fileSessions += 1
+        if (snapshot !== null) folded = await readThroughPersistence(ctx, header, snapshot)
+        if (folded === null && file) folded = readPersisted(id, file, header)
       }
+      if (folded === null) {
+        skipped += 1
+        continue
+      }
+      const annotated = annotateFailures(folded.usages, folded.failed)
+      if (revision !== '') {
+        sessionCache.set(id, { revision, usages: annotated, failed: folded.failed, catalog: folded.catalog })
+      }
+      usages.push(...annotated)
+      for (const hint of folded.catalog) if (!hints.has(hint.name)) hints.set(hint.name, hint)
     } catch {
       skipped += 1
     }
-    // Keep the host responsive: one scan is many files, and a long synchronous
+
+    // Keep the host responsive: one scan is many sessions, and a long synchronous
     // stretch would stall the GUI's other work.
     if (performance.now() - lastYield > 25) {
       lastYield = performance.now()
