@@ -25,8 +25,11 @@ and when — git history is the only audit trail while protection is off.
 - A behaviour change bumps `package.json` and adds a `CHANGELOG.md` entry
   (Keep a Changelog format, SemVer).
 - A change to the panel's appearance requires regenerated screenshots in `docs/`.
-- The panel counts **live host events only** (`tools/result`, `session/event`).
-  Do not reintroduce session-log parsing.
+- The panel counts **live host events only** (`session/event`). Do not reintroduce
+  session-log parsing.
+- Counting is **turn-scoped**: one use per user request per skill. The signals are
+  a skill load, a `/name` invocation, and a later mention of an already-loaded
+  skill; keep `lib/usage-tracker.js` as the single owner of that rule.
 - Never commit credentials, local absolute paths, or generated counter files.
 - Keep the inventory sources honest: the skills service, disk skill roots,
   installed plugin packages, and preset scopes — no log-derived snapshots.

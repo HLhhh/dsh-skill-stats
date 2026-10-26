@@ -55,7 +55,7 @@ function createCtx() {
   }
 }
 
-function emit(handlers, name, ...args) {
+function emitEvent(handlers, name, ...args) {
   for (const fn of handlers.get(name) || []) fn(...args)
 }
 
@@ -89,12 +89,18 @@ test('counts agent and user usage, serves the payload and flushes on unload', as
     const harness = createCtx()
     apply(harness.ctx)
 
-    // One agent call and one /name invocation.
-    emit(harness.handlers, 'tools/result', { name: 'skill', arguments: { name: 'grilling' }, agent: { id: 's1' } }, { isError: false })
-    emit(harness.handlers, 'session/event', { header: { id: 's2' } }, { type: 'user/message', data: { source: { kind: 'skill-invocation', name: 'grilling' } } })
+    // Turn 1: the agent loads grilling. Turn 2: the user names it again.
+    const session = { header: { id: 's1' } }
+    let seq = 0
+    const emit = (type, data) => emitEvent(harness.handlers, 'session/event', session, { type, seq: ++seq, data })
+    emit('turn/start', { turn: 1 })
+    emit('tool/call', { turn: 1, step: 1, callId: 'c1', name: 'skill', arguments: JSON.stringify({ name: 'grilling' }) })
+    emit('tool/result', { turn: 1, step: 1, message: { toolCallId: 'c1' } })
+    emit('turn/start', { turn: 2 })
+    emit('user/message', { content: [{ type: 'text', text: '再来一次grilling' }], source: { kind: 'user' } })
     // Noise that must not be counted.
-    emit(harness.handlers, 'tools/result', { name: 'bash', arguments: {} }, {})
-    emit(harness.handlers, 'session/event', { header: { id: 's1' } }, { type: 'user/message', data: { source: { kind: 'user' } } })
+    emit('tool/call', { turn: 2, callId: 'c2', name: 'bash', arguments: '{}' })
+    emit('tool/result', { turn: 2, message: { toolCallId: 'c2' } })
 
     const route = harness.route()
     assert.ok(route, 'route registered')
@@ -104,7 +110,7 @@ test('counts agent and user usage, serves the payload and flushes on unload', as
     assert.equal(response.status, 200)
     const payload = JSON.parse(response.body)
     assert.equal(payload.totals.calls, 2)
-    assert.equal(payload.totals.sessions, 2)
+    assert.equal(payload.totals.sessions, 1)
     assert.equal(payload.skills[0].name, 'grilling')
     assert.equal(payload.skills[0].total, 2)
     assert.deepEqual(payload.uninstalled, [])
@@ -119,7 +125,7 @@ test('counts agent and user usage, serves the payload and flushes on unload', as
 
     // Catalog invalidation is wired: a changed service list shows up.
     harness.setSummaries([{ name: 'grilling', description: '', source: 'user-dsh', provider: 'filesystem', invocation: {} }, { name: 'brand-new', description: '', source: 'user-dsh', provider: 'filesystem', invocation: {} }])
-    emit(harness.handlers, 'skills/change')
+    emitEvent(harness.handlers, 'skills/change')
     const afterChange = JSON.parse((await request(route)).body)
     assert.ok(afterChange.skills.some((row) => row.name === 'brand-new'))
 
